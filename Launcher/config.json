@@ -6,7 +6,7 @@
   // two predefined environments, 'backtesting' and 'live', feel free
   // to add more!
 
-  "environment": "live-interactive-iex-desktop", // "live-paper", "backtesting", "live-tradier", "live-interactive", "live-interactive-iex", "live-interactive-iex-desktop", "live-interactive-iqfeed", "live-fxcm", "live-oanda", "backtesting-desktop", "live-desktop", "live-gdax"
+  "environment": "backtesting", // "live-paper", "backtesting", "live-tradier", "live-interactive", "live-interactive-iex", "live-interactive-iex-desktop", "live-interactive-iqfeed", "live-fxcm", "live-oanda", "backtesting-desktop", "live-desktop", "live-gdax"
 
   // algorithm class selector
   "algorithm-type-name": "BasicTemplateFrameworkAlgorithm",
@@ -50,7 +50,7 @@
   "transaction-log": "",
 
   // To get your api access token go to quantconnect.com/account
-  "job-user-id": "",
+  "job-user-id": "0",
   "api-access-token": "",
 
   // live data configuration
@@ -66,8 +66,9 @@
   "ib-agent-description": "Individual",
   "ib-use-tws": false,
   "ib-tws-dir": "C:\\Jts",
-  "ib-trading-mode": "live",
+  "ib-trading-mode": "paper",
   "ib-controller-dir": "C:\\IBController",
+  "ib-enable-delayed-streaming-data": false,
 
   // tradier configuration
   "tradier-account-id": "",
@@ -270,7 +271,7 @@
       "messaging-handler": "QuantConnect.Messaging.StreamingMessageHandler",
       "log-handler": "QuantConnect.Logging.QueueLogHandler",
       "desktop-http-port": "1234",
-      "desktop-exe": "../../../UserInterface/bin/Release/QuantConnect.Views.exe"
+      "desktop-exe": "../../../UserInterface/bin/Debug/QuantConnect.Views.exe"
     },
 
     // defines the 'live-desktop' environment
