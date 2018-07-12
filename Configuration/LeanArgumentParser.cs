@@ -76,6 +76,8 @@ namespace QuantConnect.Configuration
                 new CommandLineOption("job-user-id", CommandOptionType.SingleValue),
                 new CommandLineOption("api-access-token", CommandOptionType.SingleValue),
 
+                new CommandLineOption("alphavantage-api-access-token", CommandOptionType.SingleValue),
+
                 // live data configuration
                 new CommandLineOption("live-data-url", CommandOptionType.SingleValue),
                 new CommandLineOption("live-data-port", CommandOptionType.SingleValue),

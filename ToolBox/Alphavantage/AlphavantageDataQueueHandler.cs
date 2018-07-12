@@ -23,29 +23,35 @@ using System.Runtime.CompilerServices;
 using QuantConnect.Interfaces;
 using HistoryRequest = QuantConnect.Data.HistoryRequest;
 using QuantConnect.Lean.Engine.DataFeeds.Queues;
+using QuantConnect.Configuration;
+using System.Text;
+using System.Net;
+using QuantConnect.Data.Market;
 
 namespace QuantConnect.ToolBox.Alphavantage
 {
     /// <summary>
     /// Live Data Queue is the cut out implementation of how to bind a custom live data source 
     /// </summary>
-    public class AlphavantageDataQueueHandler : LiveDataQueue, IHistoryProvider
+    public class AlphavantageDataQueueHandler : LiveDataQueue
     {
-        private int _dataPointCount;
-        
+        private Dictionary<Symbol, DateTime> _subscribedSymbols; // List of subscribed symbols. and the timestamp of the last data received for this symbol.
+        private string _apiToken;
+        private bool _apiTokenIsValid;
+
         public AlphavantageDataQueueHandler()
         {
-            // Pseudo-code:
-            // - Test the connection with Alphavantage, and throw an exception if it cannot be reached?
-            // Get the Alphavantage API token from the config.json file. Store in member variable. Throw an error if not found. 
-        }
-        
-        /// <summary>
-        /// Gets the total number of data points emitted by this history provider
-        /// </summary>
-        public int DataPointCount
-        {
-            get { return _dataPointCount; }
+            _apiTokenIsValid = false;
+            _apiToken = Config.Get("alphavantage-api-access-token");
+            _subscribedSymbols = new Dictionary<Symbol, DateTime>();
+            if (_apiToken.Length >= 5)
+            {
+                _apiTokenIsValid = true;
+            }
+            else
+            {
+                throw new ArgumentException("Alphavantage api token invalid. Please check value 'alphavantage-api-access-token' in config.json");
+            }
         }
       
         /// <summary>
@@ -54,7 +60,7 @@ namespace QuantConnect.ToolBox.Alphavantage
         /// <returns>Tick</returns>
         public sealed override IEnumerable<BaseData> GetNextTicks()
         {
-            return null;
+            
             // Pseudo-code
             /*
             - Iterate through the subscribed symbols
@@ -63,26 +69,84 @@ namespace QuantConnect.ToolBox.Alphavantage
                     - If no tick has been received, return all ticks that are later than one resolution cycle ago.
                       Ex: If we requested hourly data for SPY symbol, return all data from the past hour. If not first tick received, return all data that is later than last tick received.
             */
+            if (_apiTokenIsValid)
+            {
+                List<Symbol> subscribedSymbols = new List<Symbol>(_subscribedSymbols.Keys);
+                foreach (Symbol subscription in subscribedSymbols)
+                {
+                    var sb = new StringBuilder();
+                    sb.Append("https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY");
+                    sb.Append("&symbol=" + subscription.Value);
+                    sb.Append("&interval=1min");
+                    if (_subscribedSymbols[subscription] == DateTime.MinValue)
+                    {
+                        sb.Append("&outputsize=full");
+                    }
+                    else
+                    {
+                        sb.Append("&outputsize=compact");
+                    }
+                    sb.Append("&apikey=" + _apiToken);
+
+                    var client = new WebClient();
+                    client.Headers.Add("user-agent", "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36");
+                    var response = client.DownloadString(sb.ToString());
+                    var parsedResponse = JObject.Parse(response);
+
+                    if (parsedResponse["Time Series (1min)"] != null)
+                    {
+                        JObject data = (JObject)parsedResponse["Time Series (1min)"];
+                        DateTime latestTimeStamp = _subscribedSymbols[subscription];
+                        foreach (var item in data)
+                        {
+                            var timestampString = item.Key;
+                            var timestamp = DateTime.Parse(timestampString);
+
+                            if (timestamp <= _subscribedSymbols[subscription])
+                            {
+                                continue;
+                            }
+                            latestTimeStamp = timestamp;
+
+                            var open = item.Value["1. open"].Value<decimal>();
+                            var high = item.Value["2. high"].Value<decimal>();
+                            var low = item.Value["3. low"].Value<decimal>();
+                            var close = item.Value["4. close"].Value<decimal>();
+                            var volume = item.Value["5. volume"].Value<int>();
+
+                            TradeBar tradeBar = new TradeBar(timestamp, subscription, open, high, low, close, volume);
+
+                            yield return tradeBar;
+                        }
+                        _subscribedSymbols[subscription] = latestTimeStamp;
+                    }
+                }
+            }
         }
 
         /// <summary>
-        /// Desktop/Local doesn't support live data from this handler
+        /// Adds the symbol to the list of subscriptions
         /// </summary>
         public sealed override void Subscribe(LiveNodePacket job, IEnumerable<Symbol> symbols)
         {
-            // Pseudo-code:
-            // - Add the requested symbol and its resolution in a member variable that will contain the list of symbols to query
-            // - This variable will be a dictionary that will contain:
-            //     - {<Symbol_Name>: {"Resolution": <Requested resolution>, "Last tick time": <Timestamp of the last tick received for this symbol>}}
+            foreach (Symbol symbol in symbols)
+            {
+                if (!_subscribedSymbols.ContainsKey(symbol))
+                {
+                    _subscribedSymbols.Add(symbol, DateTime.MinValue);
+                }
+            }
         }
 
         /// <summary>
-        /// Desktop/Local doesn't support live data from this handler
+        /// Removes the symbol from the list of subscriptions
         /// </summary>
         public sealed override void Unsubscribe(LiveNodePacket job, IEnumerable<Symbol> symbols)
         {
-            // Pseudo-code:
-            // - Remove the requested symbol from a member variable that will contain the list of symbols to query
+            foreach (Symbol symbol in symbols)
+            {
+                _subscribedSymbols.Remove(symbol);
+            }
         }
 
         /// <summary>
@@ -92,154 +156,22 @@ namespace QuantConnect.ToolBox.Alphavantage
         /// <returns>Whether or not the given symbol is subscribed to</returns>
         public bool IsSubscribedTo(String symbol)
         {
-            return true;
-            // Pseudo-code:
-            // - Return true if the symbol is in the subscrition list
+            bool subscribed = false;
+            foreach (Symbol subscribedSymbol in _subscribedSymbols.Keys)
+            {
+                subscribed |= (symbol == subscribedSymbol.Value);
+            }
+            return subscribed;
         }
 
         /// <summary>
-        /// Initializes this history provider to work for the specified job
+        /// Returns true if the given symbol is subscribed to.
         /// </summary>
-        /// <param name="job">The job</param>
-        /// <param name="mapFileProvider">Provider used to get a map file resolver to handle equity mapping</param>
-        /// <param name="factorFileProvider">Provider used to get factor files to handle equity price scaling</param>
-        /// <param name="dataProvider">Provider used to get data when it is not present on disk</param>
-        /// <param name="statusUpdate">Function used to send status updates</param>
-        /// <param name="dataCacheProvider">Provider used to cache history data files</param>
-        public void Initialize(AlgorithmNodePacket job, IDataProvider dataProvider, IDataCacheProvider dataCacheProvider, IMapFileProvider mapFileProvider, IFactorFileProvider factorFileProvider, Action<int> statusUpdate)
+        /// <param name="symbol">The symbol</param>
+        /// <returns>Whether or not the given symbol is subscribed to</returns>
+        public bool IsSubscribedTo(Symbol symbol)
         {
-            return;
-        }
-        
-        /// <summary>
-        /// Gets the history for the requested securities
-        /// </summary>
-        /// <param name="requests">The historical data requests</param>
-        /// <param name="sliceTimeZone">The time zone used when time stamping the slice instances</param>
-        /// <returns>An enumerable of the slices of data covering the span specified in each request</returns>
-        public IEnumerable<Slice> GetHistory(IEnumerable<HistoryRequest> requests, DateTimeZone sliceTimeZone)
-        {
-            foreach (var request in requests)
-            {
-                foreach (var slice in ProcessHistoryRequests(request))
-                {
-                    yield return slice;
-                }
-            }
-        }
-        
-        /// <summary>
-        /// Populate request data
-        /// </summary>
-        private IEnumerable<Slice> ProcessHistoryRequests(HistoryRequest request)
-        {
-            return null;
-            // TODO: Implement, similar to IEX history provider (code below)
-            /*
-            var ticker = request.Symbol.ID.Symbol;
-            var start = request.StartTimeUtc.ConvertFromUtc(TimeZones.NewYork);
-            var end = request.EndTimeUtc.ConvertFromUtc(TimeZones.NewYork);
-
-            if (request.Resolution != Resolution.Daily)
-            {
-                Log.Error("IEXDataQueueHandler.GetHistory(): History calls for IEX only support daily resolution.");
-                yield break;
-            }
-            if (start <= DateTime.Today.AddYears(-5))
-            {
-                Log.Error("IEXDataQueueHandler.GetHistory(): History calls for IEX only support a maximum of 5 years history.");
-                yield break;
-            }
-
-            Log.Trace(string.Format("IEXDataQUeueHandler.ProcessHistoryRequests(): Submitting request: {0}-{1}: {2} {3}->{4}", request.Symbol.SecurityType, ticker, request.Resolution, start, end));
-
-            var client = new WebClient();
-            client.Headers.Add("user-agent", "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36");
-            var response = client.DownloadString("https://api.iextrading.com/1.0/stock/" + ticker + "/chart/5y");
-            var parsedResponse = JArray.Parse(response);
-
-            foreach (var item in parsedResponse.Children())
-            {
-                var date = DateTime.Parse(item["date"].Value<string>());
-
-                if (date.Date < start.Date || date.Date > end.Date)
-                {
-                    continue;
-                }
-
-                Interlocked.Increment(ref _dataPointCount);
-
-                var open = item["open"].Value<decimal>();
-                var high = item["high"].Value<decimal>();
-                var low = item["low"].Value<decimal>();
-                var close = item["close"].Value<decimal>();
-                var volume = item["volume"].Value<int>();
-
-                TradeBar tradeBar = new TradeBar(date, request.Symbol, open, high, low, close, volume);
-
-                yield return new Slice(tradeBar.EndTime, new[] { tradeBar });
-            }
-            */
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal void ProcessJsonObject(JObject message)
-        {
-          // TODO: Implement, similar to IEX history provider (code below)
-          /*try
-          {
-              // https://iextrading.com/developer/#tops-tops-response
-              var symbolString = message["symbol"].Value<string>();
-              Symbol symbol;
-              if (!_symbols.TryGetValue(symbolString, out symbol))
-              {
-                  if (_subscribedToAll)
-                  {
-                      symbol = Symbol.Create(symbolString, SecurityType.Equity, Market.USA);
-                  }
-                  else
-                  {
-                      Log.Trace("IEXDataQueueHandler.ProcessJsonObject(): Received unexpected symbol '" + symbolString + "' from IEX in IEXDataQueueHandler");
-                      return;
-                  }
-              }
-              var bidSize = message["bidSize"].Value<long>();
-              var bidPrice = message["bidPrice"].Value<decimal>();
-              var askSize = message["askSize"].Value<long>();
-              var askPrice = message["askPrice"].Value<decimal>();
-              var volume = message["volume"].Value<int>();
-              var lastSalePrice = message["lastSalePrice"].Value<decimal>();
-              var lastSaleSize = message["lastSaleSize"].Value<int>();
-              var lastSaleTime = message["lastSaleTime"].Value<long>();
-              var lastSaleDateTime = UnixEpoch.AddMilliseconds(lastSaleTime);
-              var lastUpdated = message["lastUpdated"].Value<long>();
-              if (lastUpdated == -1)
-              {
-                  // there were no trades on this day
-                  return;
-              }
-              var lastUpdatedDatetime = UnixEpoch.AddMilliseconds(lastUpdated);
-
-              var tick = new Tick()
-              {
-                  Symbol = symbol,
-                  Time = lastUpdatedDatetime.ConvertFromUtc(TimeZones.NewYork),
-                  TickType = lastUpdatedDatetime == lastSaleDateTime ? TickType.Trade : TickType.Quote,
-                  Exchange = "IEX",
-                  BidSize = bidSize,
-                  BidPrice = bidPrice,
-                  AskSize = askSize,
-                  AskPrice = askPrice,
-                  Value = lastSalePrice,
-                  Quantity = lastSaleSize
-              };
-              _outputCollection.TryAdd(tick);
-          }
-          catch (Exception err)
-          {
-              // this method should never fail
-              Log.Error("IEXDataQueueHandler.ProcessJsonObject(): " + err.Message);
-          }*/
+            return _subscribedSymbols.ContainsKey(symbol);
         }
     }
 }

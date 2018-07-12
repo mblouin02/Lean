@@ -21,6 +21,7 @@ using System.Threading.Tasks;
 using NUnit.Framework;
 using QuantConnect.Configuration;
 using QuantConnect.Data;
+using QuantConnect.Logging;
 using QuantConnect.ToolBox.Alphavantage;
 
 namespace QuantConnect.Tests.Engine.DataFeeds
@@ -95,7 +96,7 @@ namespace QuantConnect.Tests.Engine.DataFeeds
             Assert.IsTrue(alphavantage.IsSubscribedTo("AMZN"));
         }
 
-        [Test, Ignore("Test is dependent on setting Alphavantage API token in config.json")]
+        [Test]
         public void AlphavantageCouldGetLiveData()
         {
             var alphavantage = new AlphavantageDataQueueHandler();
@@ -116,15 +117,21 @@ namespace QuantConnect.Tests.Engine.DataFeeds
             int dataCount = 0;
             foreach (BaseData dataPoint in data)
             {
-                Assert.True(dataPoint.Symbol == "SPY" || dataPoint.Symbol == "AAPL");
+                Assert.True(dataPoint.Symbol == Symbol.Create("SPY", SecurityType.Equity, Market.USA) || dataPoint.Symbol == Symbol.Create("AAPL", SecurityType.Equity, Market.USA));
                 Assert.True(dataPoint.DataType == MarketDataType.TradeBar);
                 Assert.True(dataPoint.EndTime <= DateTime.UtcNow);
                 Assert.True(dataPoint.Time <= DateTime.UtcNow);
                 Assert.True(dataPoint.Price > 0);
                 Assert.True(dataPoint.Value > 0);
+
+                if (dataCount <= 10)
+                {
+                    Log.Trace("{0}: {1} - Value={2}", dataPoint.Time, dataPoint.Symbol.Value, dataPoint.Value);
+                }
+
                 dataCount++;
             }
-            Assert.GreaterOrEqual(dataCount, 1);
+            Assert.GreaterOrEqual(dataCount, 2);
         }
     }
 }

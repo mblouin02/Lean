@@ -271,6 +271,7 @@
     <Compile Include="Engine\BrokerageTransactionHandlerTests\BrokerageTransactionHandlerTests.cs" />
     <Compile Include="Engine\DataCacheProviders\SingleEntryDataCacheProviderTests.cs" />
     <Compile Include="Engine\DataFeeds\AlgorithmStub.cs" />
+    <Compile Include="Engine\DataFeeds\AlphavantageDataQueueHandlerTests.cs" />
     <Compile Include="Engine\DataFeeds\Auxiliary\MapFileResolverTests.cs" />
     <Compile Include="Engine\DataFeeds\BaseDataExchangeTests.cs" />
     <Compile Include="Engine\DataFeeds\CustomLiveDataFeedTests.cs" />
