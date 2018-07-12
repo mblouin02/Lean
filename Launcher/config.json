@@ -52,6 +52,9 @@
     // To get your api access token go to quantconnect.com/account
     "job-user-id": "0",
     "api-access-token": "",
+    
+    // To get your alphavantage api token go to https://www.alphavantage.co/support/#api-key
+    "alphavantage-api-access-token": "",
 
     // live data configuration
     "live-data-url": "ws://www.quantconnect.com/api/v2/live/data/",
