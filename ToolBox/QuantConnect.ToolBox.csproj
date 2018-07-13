@@ -168,6 +168,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Alphavantage\AlphavantageDataQueueHandler.cs" />
     <Compile Include="GDAXDownloader\GDAXDownloader.cs" />
     <Compile Include="GDAXDownloader\GDAXDownloaderProgram.cs" />
     <Compile Include="GzipStreamProvider.cs" />

@@ -114,9 +114,12 @@ namespace QuantConnect.ToolBox.Alphavantage
                             var close = item.Value["4. close"].Value<decimal>();
                             var volume = item.Value["5. volume"].Value<int>();
 
-                            TradeBar tradeBar = new TradeBar(timestamp, subscription, open, high, low, close, volume);
+                            Tick tick = new Tick(timestamp, subscription, close, close, close);
+                            tick.Quantity = volume;
 
-                            yield return tradeBar;
+                            //(timestamp, subscription, open, high, low, close, volume);
+
+                            yield return tick;
                         }
                         _subscribedSymbols[subscription] = latestTimeStamp;
                     }
