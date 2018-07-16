@@ -27,6 +27,8 @@ using QuantConnect.Configuration;
 using System.Text;
 using System.Net;
 using QuantConnect.Data.Market;
+using QuantConnect.Logging;
+using System.Threading;
 
 namespace QuantConnect.ToolBox.Alphavantage
 {
@@ -38,12 +40,15 @@ namespace QuantConnect.ToolBox.Alphavantage
         private Dictionary<Symbol, DateTime> _subscribedSymbols; // List of subscribed symbols. and the timestamp of the last data received for this symbol.
         private string _apiToken;
         private bool _apiTokenIsValid;
+        private DateTime _lastApiCallTime = DateTime.MinValue;
+        private List<Symbol> _apiRequestsQueue;
 
         public AlphavantageDataQueueHandler()
         {
             _apiTokenIsValid = false;
             _apiToken = Config.Get("alphavantage-api-access-token");
             _subscribedSymbols = new Dictionary<Symbol, DateTime>();
+            _apiRequestsQueue = new List<Symbol>();
             if (_apiToken.Length >= 5)
             {
                 _apiTokenIsValid = true;
@@ -60,23 +65,34 @@ namespace QuantConnect.ToolBox.Alphavantage
         /// <returns>Tick</returns>
         public sealed override IEnumerable<BaseData> GetNextTicks()
         {
-            
-            // Pseudo-code
-            /*
-            - Iterate through the subscribed symbols
-                - Query the data from Alphavantage
-                - Add to the return: Each minute data that is later than the last tick received.
-                    - If no tick has been received, return all ticks that are later than one resolution cycle ago.
-                      Ex: If we requested hourly data for SPY symbol, return all data from the past hour. If not first tick received, return all data that is later than last tick received.
-            */
-            if (_apiTokenIsValid)
+            Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): Start");
+
+            if (_apiTokenIsValid && ((DateTime.Now.Minute != _lastApiCallTime.Minute && DateTime.Now.Second >= 30) || _lastApiCallTime == DateTime.MinValue))
             {
-                List<Symbol> subscribedSymbols = new List<Symbol>(_subscribedSymbols.Keys);
+                _lastApiCallTime = DateTime.Now;
+
+                foreach(Symbol subscription in _subscribedSymbols.Keys)
+                {
+                    if(!_apiRequestsQueue.Contains(subscription))
+                    {
+                        _apiRequestsQueue.Add(subscription);
+                    }
+                }
+
+                List<Symbol> subscribedSymbols = new List<Symbol>(_apiRequestsQueue);
+
                 foreach (Symbol subscription in subscribedSymbols)
                 {
+                    if (subscription.Contains("QC-UNIVERSE"))
+                    {
+                        continue;
+                    }
+
+                    Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): Processing subscription: " + subscription);
+                    Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): Subscription " + subscription + " is of type: " + subscription.SecurityType);
                     var sb = new StringBuilder();
                     sb.Append("https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY");
-                    sb.Append("&symbol=" + subscription.Value);
+                    sb.Append("&symbol=" + subscription);
                     sb.Append("&interval=1min");
                     if (_subscribedSymbols[subscription] == DateTime.MinValue)
                     {
@@ -90,17 +106,39 @@ namespace QuantConnect.ToolBox.Alphavantage
 
                     var client = new WebClient();
                     client.Headers.Add("user-agent", "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36");
+
+                    Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): Sending this request:" + sb.ToString());
+
                     var response = client.DownloadString(sb.ToString());
                     var parsedResponse = JObject.Parse(response);
 
+                    Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): Received response. Checking if it contains 'Time Series (1min)'");
+                    //Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): Response = " + response);
+
                     if (parsedResponse["Time Series (1min)"] != null)
                     {
+                        Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): Found 'Time Series (1min)'");
+
+                        _apiRequestsQueue.Remove(subscription);
+
                         JObject data = (JObject)parsedResponse["Time Series (1min)"];
                         DateTime latestTimeStamp = _subscribedSymbols[subscription];
+
+                        // TODO: Remove this isFirstItem debug check
+                        bool isFirstItem = true;
+                        bool isFirstValidItem = true;
+
+                        Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): About to iterate through all data items received");
                         foreach (var item in data)
                         {
                             var timestampString = item.Key;
                             var timestamp = DateTime.Parse(timestampString);
+
+                            if (isFirstItem)
+                            {
+                                Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): First data item received: " + timestampString);
+                                isFirstItem = false;
+                            }
 
                             if (timestamp <= _subscribedSymbols[subscription])
                             {
@@ -114,10 +152,21 @@ namespace QuantConnect.ToolBox.Alphavantage
                             var close = item.Value["4. close"].Value<decimal>();
                             var volume = item.Value["5. volume"].Value<int>();
 
+                            if (isFirstValidItem)
+                            {
+                                Log.Trace("AlphavantageDataQueueHandler.GetNextTicks(): First valid data item received: ");
+                                Log.Trace("-------- Timestamp = " + timestampString);
+                                Log.Trace("-------- Open = " + open);
+                                Log.Trace("-------- High = " + high);
+                                Log.Trace("-------- Low = " + low);
+                                Log.Trace("-------- Close = " + close);
+                                Log.Trace("-------- Volume = " + volume);
+                                isFirstValidItem = false;
+                            }
+
                             Tick tick = new Tick(timestamp, subscription, close, close, close);
                             tick.Quantity = volume;
-
-                            //(timestamp, subscription, open, high, low, close, volume);
+                            tick.TickType = TickType.Trade;
 
                             yield return tick;
                         }

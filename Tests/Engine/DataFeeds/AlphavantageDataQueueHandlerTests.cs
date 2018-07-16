@@ -21,7 +21,9 @@ using System.Threading.Tasks;
 using NUnit.Framework;
 using QuantConnect.Configuration;
 using QuantConnect.Data;
+using QuantConnect.Data.Market;
 using QuantConnect.Logging;
+using QuantConnect.Securities;
 using QuantConnect.ToolBox.Alphavantage;
 
 namespace QuantConnect.Tests.Engine.DataFeeds
@@ -118,7 +120,7 @@ namespace QuantConnect.Tests.Engine.DataFeeds
             foreach (BaseData dataPoint in data)
             {
                 Assert.True(dataPoint.Symbol == Symbol.Create("SPY", SecurityType.Equity, Market.USA) || dataPoint.Symbol == Symbol.Create("AAPL", SecurityType.Equity, Market.USA));
-                Assert.True(dataPoint.DataType == MarketDataType.TradeBar);
+                Assert.True(dataPoint.DataType == MarketDataType.Tick);
                 Assert.True(dataPoint.EndTime <= DateTime.UtcNow);
                 Assert.True(dataPoint.Time <= DateTime.UtcNow);
                 Assert.True(dataPoint.Price > 0);
