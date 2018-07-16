@@ -35,13 +35,22 @@ namespace QuantConnect.ToolBox.Alphavantage
     /// <summary>
     /// Live Data Queue is the cut out implementation of how to bind a custom live data source 
     /// </summary>
-    public class AlphavantageDataQueueHandler : LiveDataQueue
+    public class AlphavantageDataQueueHandler : LiveDataQueue, IHistoryProvider
     {
         private Dictionary<Symbol, DateTime> _subscribedSymbols; // List of subscribed symbols. and the timestamp of the last data received for this symbol.
         private string _apiToken;
         private bool _apiTokenIsValid;
+        private int _dataPointCount;
         private DateTime _lastApiCallTime = DateTime.MinValue;
         private List<Symbol> _apiRequestsQueue;
+
+        /// <summary>
+        /// Gets the total number of data points emitted by this history provider
+        /// </summary>
+        public int DataPointCount
+        {
+            get { return _dataPointCount; }
+        }
 
         public AlphavantageDataQueueHandler()
         {
@@ -58,7 +67,101 @@ namespace QuantConnect.ToolBox.Alphavantage
                 throw new ArgumentException("Alphavantage api token invalid. Please check value 'alphavantage-api-access-token' in config.json");
             }
         }
-      
+
+        /// <summary>
+        /// Initializes this history provider to work for the specified job
+        /// </summary>
+        /// <param name="job">The job</param>
+        /// <param name="mapFileProvider">Provider used to get a map file resolver to handle equity mapping</param>
+        /// <param name="factorFileProvider">Provider used to get factor files to handle equity price scaling</param>
+        /// <param name="dataProvider">Provider used to get data when it is not present on disk</param>
+        /// <param name="statusUpdate">Function used to send status updates</param>
+        /// <param name="dataCacheProvider">Provider used to cache history data files</param>
+        public void Initialize(AlgorithmNodePacket job, IDataProvider dataProvider, IDataCacheProvider dataCacheProvider, IMapFileProvider mapFileProvider, IFactorFileProvider factorFileProvider, Action<int> statusUpdate)
+        {
+            return;
+        }
+
+        /// <summary>
+        /// Gets the history for the requested securities
+        /// </summary>
+        /// <param name="requests">The historical data requests</param>
+        /// <param name="sliceTimeZone">The time zone used when time stamping the slice instances</param>
+        /// <returns>An enumerable of the slices of data covering the span specified in each request</returns>
+        public IEnumerable<Slice> GetHistory(IEnumerable<HistoryRequest> requests, DateTimeZone sliceTimeZone)
+        {
+            if (_apiTokenIsValid)
+            {
+                foreach (var request in requests)
+                {
+                    foreach (var slice in ProcessHistoryRequests(request))
+                    {
+                        yield return slice;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Populate request data
+        /// </summary>
+        private IEnumerable<Slice> ProcessHistoryRequests(HistoryRequest request)
+        {
+            var ticker = request.Symbol.ID.Symbol;
+            var start = request.StartTimeUtc.ConvertFromUtc(TimeZones.NewYork);
+            var end = request.EndTimeUtc.ConvertFromUtc(TimeZones.NewYork);
+
+            if (request.Resolution != Resolution.Daily)
+            {
+                Log.Error("AlphavantageDataQueueHandler.GetHistory(): History calls for Alphavantage only support daily resolution.");
+                yield break;
+            }
+
+            Log.Trace(string.Format("AlphavantageDataQueueHandler.ProcessHistoryRequests(): Submitting request: {0}-{1}: {2} {3}->{4}", request.Symbol.SecurityType, ticker, request.Resolution, start, end));
+
+            var sb = new StringBuilder();
+            sb.Append("https://www.alphavantage.co/query?function=TIME_SERIES_DAILY");
+            sb.Append("&symbol=" + ticker);
+            sb.Append("&outputsize=full");
+            sb.Append("&apikey=" + _apiToken);
+
+            var client = new WebClient();
+            client.Headers.Add("user-agent", "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36");
+            var response = client.DownloadString(sb.ToString());
+            var parsedResponse = JObject.Parse(response);
+
+            if (parsedResponse["Time Series (Daily)"] != null)
+            {
+                JObject data = (JObject)parsedResponse["Time Series (Daily)"];
+
+                foreach (var item in data)
+                {
+                    var timestampString = item.Key;
+                    var timestamp = DateTime.Parse(timestampString);
+
+                    if (timestamp.Date < start.Date || timestamp.Date > end.Date)
+                    {
+                        continue;
+                    }
+                    Interlocked.Increment(ref _dataPointCount);
+
+                    var open = item.Value["1. open"].Value<decimal>();
+                    var high = item.Value["2. high"].Value<decimal>();
+                    var low = item.Value["3. low"].Value<decimal>();
+                    var close = item.Value["4. close"].Value<decimal>();
+                    var volume = item.Value["5. volume"].Value<int>();
+
+                    TradeBar tradeBar = new TradeBar(timestamp.Date, request.Symbol, open, high, low, close, volume);
+
+                    yield return new Slice(tradeBar.EndTime, new[] { tradeBar });
+                }
+            }
+            else
+            {
+                throw new ArgumentException("QuantConnect.Toolbox.AlphavantageDataQueueHandler: Invalid API call, or API call limit reached for this minute.");
+            }
+        }
+
         /// <summary>
         /// Desktop/Local doesn't support live data from this handler
         /// </summary>
